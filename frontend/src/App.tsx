@@ -69,7 +69,11 @@ const exportToCsv = (rows: any[], headers: string[], filename: string) => {
   window.URL.revokeObjectURL(url);
 };
 
-const CSV_URL = "/merged_df.csv";
+// Cloudflare R2 URL (from dashboard)
+const CLOUDFLARE_R2_URL =
+  "https://pub-d6df37eab3344b629761df0b66b2840d.r2.dev/merged_df.csv";
+const CSV_URL = CLOUDFLARE_R2_URL;
+console.log("Using Cloudflare R2 URL:", CSV_URL);
 
 type Row = Record<string, string>;
 
@@ -235,18 +239,39 @@ const App: React.FC = () => {
 
   // Load CSV
   useEffect(() => {
-    Papa.parse(CSV_URL, {
-      download: true,
-      header: true,
-      skipEmptyLines: true,
-      complete: (results: Papa.ParseResult<Row>) => {
-        setData(results.data as Row[]);
-        setHeaders(results.meta.fields || []);
-        setVisibleColumns(results.meta.fields || []);
-        setColumnOrder(results.meta.fields || []);
+    setLoading(true);
+
+    fetch(CSV_URL)
+      .then((response) => {
+        console.log("Response status:", response.status);
+        if (!response.ok) {
+          throw new Error(`Network error: ${response.status}`);
+        }
+        return response.text();
+      })
+      .then((csvText) => {
+        // Add log to check CSV text
+        console.log(
+          "CSV data loaded, first 100 chars:",
+          csvText.substring(0, 100)
+        );
+
+        Papa.parse(csvText, {
+          header: true,
+          skipEmptyLines: true,
+          complete: (results: Papa.ParseResult<Row>) => {
+            setData(results.data as Row[]);
+            setHeaders(results.meta.fields || []);
+            setVisibleColumns(results.meta.fields || []);
+            setColumnOrder(results.meta.fields || []);
+            setLoading(false);
+          },
+        });
+      })
+      .catch((error) => {
+        console.error("Failed to load CSV:", error);
         setLoading(false);
-      },
-    });
+      });
   }, []);
 
   // Filtering logic
