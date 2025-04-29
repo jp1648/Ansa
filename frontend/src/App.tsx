@@ -73,20 +73,6 @@ type Row = Record<string, string>;
 
 type Order = "asc" | "desc";
 
-// Memoize the column type guessing function
-const guessColumnType = useCallback(
-  (col: string, data: Row[]): "number" | "date" | "string" => {
-    const sample = data.find((row) => row[col] && row[col].trim() !== "")?.[
-      col
-    ];
-    if (!sample) return "string";
-    if (!isNaN(Number(sample))) return "number";
-    if (!isNaN(Date.parse(sample))) return "date";
-    return "string";
-  },
-  []
-);
-
 // Helper to map filter type to user-friendly label
 const filterTypeLabel = (type: string) => {
   switch (type) {
@@ -153,6 +139,20 @@ const App: React.FC = () => {
 
   // Add debounced search
   const debouncedSearch = useDebounce(search, 300);
+
+  // Memoize the column type guessing function
+  const guessColumnType = useCallback(
+    (col: string, data: Row[]): "number" | "date" | "string" => {
+      const sample = data.find((row) => row[col] && row[col].trim() !== "")?.[
+        col
+      ];
+      if (!sample) return "string";
+      if (!isNaN(Number(sample))) return "number";
+      if (!isNaN(Date.parse(sample))) return "date";
+      return "string";
+    },
+    []
+  );
 
   // Load CSV
   useEffect(() => {
