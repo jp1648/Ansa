@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import Papa from "papaparse";
 import { FixedSizeList } from "react-window";
+import AutoSizer from "react-virtualized-auto-sizer";
 import {
   Box,
   Container,
@@ -403,12 +404,22 @@ const App: React.FC = () => {
         minHeight: "100vh",
         bgcolor: "#fff",
         fontFamily: "Inter, Roboto, Arial, sans-serif",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       <Container
         maxWidth={false}
         disableGutters
-        sx={{ py: 4, px: 0, width: "100vw", minHeight: "100vh" }}
+        sx={{
+          py: 2,
+          px: 0,
+          width: "100vw",
+          minHeight: "100vh",
+          display: "flex",
+          flexDirection: "column",
+          flex: 1,
+        }}
       >
         <Typography
           variant="h4"
@@ -756,16 +767,16 @@ const App: React.FC = () => {
             </Button>
           </DialogActions>
         </Dialog>
-        {loading ? (
-          <Box
-            display="flex"
-            justifyContent="center"
-            alignItems="center"
-            minHeight={300}
-          >
-            <CircularProgress sx={{ color: "#111" }} />
-          </Box>
-        ) : (
+        {/* Table area fills remaining space */}
+        <Box
+          sx={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+            width: "100%",
+          }}
+        >
           <Paper
             elevation={2}
             sx={{
@@ -774,6 +785,10 @@ const App: React.FC = () => {
               overflowX: "auto",
               borderRadius: 3,
               boxShadow: 2,
+              display: "flex",
+              flexDirection: "column",
+              flex: 1,
+              minHeight: 0,
             }}
           >
             {/* Flexbox header */}
@@ -822,20 +837,25 @@ const App: React.FC = () => {
                 </Box>
               ))}
             </Box>
-            {/* Virtualized body */}
-            <Box sx={{ height: `calc(100vh - 270px)`, width: totalWidth }}>
-              <FixedSizeList
-                height={window.innerHeight - 270}
-                width={totalWidth}
-                itemCount={sortedData.length}
-                itemSize={ROW_HEIGHT}
-                overscanCount={5}
-              >
-                {Row}
-              </FixedSizeList>
+            {/* Virtualized body fills all available space */}
+            <Box sx={{ flex: 1, minHeight: 0, width: totalWidth }}>
+              {/* @ts-ignore: AutoSizer default export JSX quirk */}
+              <AutoSizer disableWidth>
+                {({ height }: { height: number }) => (
+                  <FixedSizeList
+                    height={height}
+                    width={totalWidth}
+                    itemCount={sortedData.length}
+                    itemSize={ROW_HEIGHT}
+                    overscanCount={5}
+                  >
+                    {Row}
+                  </FixedSizeList>
+                )}
+              </AutoSizer>
             </Box>
           </Paper>
-        )}
+        </Box>
       </Container>
     </Box>
   );
