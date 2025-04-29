@@ -6,6 +6,7 @@ import React, {
   useCallback,
 } from "react";
 import Papa from "papaparse";
+import { FixedSizeList } from "react-window";
 import {
   Box,
   Container,
@@ -111,6 +112,19 @@ const useDebounce = (value: string, delay: number) => {
 
   return debouncedValue;
 };
+
+// Define column widths (adjust as needed)
+const DEFAULT_COL_WIDTH = 180;
+
+const getColumnWidths = (columns: string[]) => {
+  // You can customize widths per column here if needed
+  return columns.reduce((acc, col) => {
+    acc[col] = DEFAULT_COL_WIDTH;
+    return acc;
+  }, {} as Record<string, number>);
+};
+
+const ROW_HEIGHT = 48;
 
 const App: React.FC = () => {
   const [data, setData] = useState<Row[]>([]);
@@ -237,6 +251,16 @@ const App: React.FC = () => {
     [columnOrder, visibleColumns]
   );
 
+  // Memoize column widths
+  const columnWidths = useMemo(
+    () => getColumnWidths(displayedColumns),
+    [displayedColumns]
+  );
+  const totalWidth = useMemo(
+    () => displayedColumns.reduce((sum, col) => sum + columnWidths[col], 0),
+    [displayedColumns, columnWidths]
+  );
+
   // Optimize pagination
   const [rowsToShow, setRowsToShow] = useState(50);
   const tableBodyRef = useRef<HTMLTableSectionElement>(null);
@@ -327,6 +351,50 @@ const App: React.FC = () => {
   // Remove filter
   const handleRemoveFilter = (idx: number) => {
     setActiveFilters((prev) => prev.filter((_, i) => i !== idx));
+  };
+
+  // Virtualized row
+  const Row = ({
+    index,
+    style,
+  }: {
+    index: number;
+    style: React.CSSProperties;
+  }) => {
+    const row = sortedData[index];
+    return (
+      <Box
+        style={{ ...style, width: totalWidth, display: "flex" }}
+        sx={{
+          borderBottom: "1px solid #f0f0f0",
+          bgcolor: "#fff",
+          "&:hover": { bgcolor: "#f5f5f5" },
+        }}
+      >
+        {displayedColumns.map((header) => (
+          <Box
+            key={`cell-${header}-${index}`}
+            sx={{
+              width: columnWidths[header],
+              minWidth: columnWidths[header],
+              maxWidth: columnWidths[header],
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              px: 2,
+              py: 1,
+              color: "#111",
+              fontSize: 15,
+              display: "flex",
+              alignItems: "center",
+            }}
+            title={row[header]}
+          >
+            {row[header]}
+          </Box>
+        ))}
+      </Box>
+    );
   };
 
   return (
@@ -708,130 +776,64 @@ const App: React.FC = () => {
               boxShadow: 2,
             }}
           >
-            <TableContainer
+            {/* Flexbox header */}
+            <Box
               sx={{
-                width: "100%",
-                maxWidth: "100vw",
-                height: "calc(100vh - 220px)",
-                overflowY: "auto",
-                overflowX: "auto",
-                display: "block",
+                display: "flex",
+                width: totalWidth,
+                bgcolor: "#fff",
+                borderBottom: "2px solid #eee",
+                fontWeight: 700,
+                position: "sticky",
+                top: 0,
+                zIndex: 2,
               }}
-              ref={tableBodyRef}
-              onScroll={handleScroll}
             >
-              <Table
-                stickyHeader
-                size="small"
-                sx={{ bgcolor: "#fff", color: "#111", tableLayout: "auto" }}
-              >
-                <TableHead>
-                  <DragDropContext onDragEnd={onDragEnd}>
-                    <Droppable
-                      droppableId="columns-droppable-table"
-                      direction="horizontal"
-                      type="column"
-                    >
-                      {(provided) => (
-                        <TableRow
-                          ref={provided.innerRef}
-                          {...provided.droppableProps}
-                        >
-                          {displayedColumns.map((header, idx) => (
-                            <Draggable
-                              key={header}
-                              draggableId={header}
-                              index={idx}
-                            >
-                              {(dragProvided) => (
-                                <TableCell
-                                  ref={dragProvided.innerRef}
-                                  {...dragProvided.draggableProps}
-                                  {...dragProvided.dragHandleProps}
-                                  sortDirection={
-                                    orderBy === header ? order : false
-                                  }
-                                  sx={{
-                                    bgcolor: "#fff",
-                                    color: "#111",
-                                    fontWeight: 700,
-                                    whiteSpace: "nowrap",
-                                    maxWidth: 200,
-                                    overflow: "hidden",
-                                    textOverflow: "ellipsis",
-                                    borderBottom: "2px solid #eee",
-                                  }}
-                                >
-                                  <TableSortLabel
-                                    active={orderBy === header}
-                                    direction={
-                                      orderBy === header ? order : "asc"
-                                    }
-                                    onClick={() => handleSort(header)}
-                                    sx={{
-                                      color: "#111",
-                                      "&.Mui-active": { color: "#111" },
-                                      "& .MuiTableSortLabel-icon": {
-                                        color: "#111 !important",
-                                      },
-                                    }}
-                                  >
-                                    {header}
-                                  </TableSortLabel>
-                                </TableCell>
-                              )}
-                            </Draggable>
-                          ))}
-                          {provided.placeholder}
-                        </TableRow>
-                      )}
-                    </Droppable>
-                  </DragDropContext>
-                </TableHead>
-                <TableBody>
-                  {sortedData.slice(0, rowsToShow).map((row, idx) => (
-                    <TableRow
-                      key={`row-${idx}`}
-                      hover
-                      sx={{
-                        bgcolor: "#fff",
-                        color: "#111",
-                        transition: "background 0.2s",
-                        "&:hover": { bgcolor: "#f5f5f5" },
-                      }}
-                    >
-                      {displayedColumns.map((header) => (
-                        <TableCell
-                          key={`cell-${header}-${idx}`}
-                          sx={{
-                            bgcolor: "#fff",
-                            color: "#111",
-                            maxWidth: 200,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            whiteSpace: "nowrap",
-                            borderBottom: "1px solid #f0f0f0",
-                          }}
-                          title={row[header]}
-                        >
-                          {row[header]}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))}
-                  {rowsToShow < sortedData.length && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={displayedColumns.length}
-                        align="center"
-                      >
-                        <CircularProgress size={24} sx={{ my: 2 }} />
-                      </TableCell>
-                    </TableRow>
+              {displayedColumns.map((header, idx) => (
+                <Box
+                  key={header}
+                  sx={{
+                    width: columnWidths[header],
+                    minWidth: columnWidths[header],
+                    maxWidth: columnWidths[header],
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    px: 2,
+                    py: 1,
+                    color: "#111",
+                    fontWeight: 700,
+                    display: "flex",
+                    alignItems: "center",
+                    borderRight:
+                      idx === displayedColumns.length - 1
+                        ? "none"
+                        : "1px solid #eee",
+                    cursor: "pointer",
+                  }}
+                  onClick={() => handleSort(header)}
+                >
+                  {header}
+                  {orderBy === header && (
+                    <Box component="span" sx={{ ml: 1, fontSize: 12 }}>
+                      {order === "asc" ? "▲" : "▼"}
+                    </Box>
                   )}
-                </TableBody>
-              </Table>
-            </TableContainer>
+                </Box>
+              ))}
+            </Box>
+            {/* Virtualized body */}
+            <Box sx={{ height: `calc(100vh - 270px)`, width: totalWidth }}>
+              <FixedSizeList
+                height={window.innerHeight - 270}
+                width={totalWidth}
+                itemCount={sortedData.length}
+                itemSize={ROW_HEIGHT}
+                overscanCount={5}
+              >
+                {Row}
+              </FixedSizeList>
+            </Box>
           </Paper>
         )}
       </Container>
