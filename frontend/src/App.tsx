@@ -116,16 +116,65 @@ const useDebounce = (value: string, delay: number) => {
 
 // Define column widths (adjust as needed)
 const DEFAULT_COL_WIDTH = 180;
+const MIN_COL_WIDTH = 80;
+const RESIZE_HANDLE_WIDTH = 10; // Wider handle for easier grabbing
 
-const getColumnWidths = (columns: string[]) => {
-  // You can customize widths per column here if needed
-  return columns.reduce((acc, col) => {
-    acc[col] = DEFAULT_COL_WIDTH;
+const getColumnWidths = (
+  columns: string[],
+  containerWidth: number,
+  customWidths: Record<string, number> = {}
+) => {
+  // First apply custom widths if they exist
+  const baseWidths = columns.reduce((acc, col) => {
+    acc[col] = customWidths[col] || DEFAULT_COL_WIDTH;
     return acc;
   }, {} as Record<string, number>);
+
+  // If total columns would be less than container, expand to fill
+  // but only for columns that don't have custom widths
+  const calculatedWidth = columns.reduce(
+    (sum, col) => sum + (customWidths[col] || DEFAULT_COL_WIDTH),
+    0
+  );
+
+  if (calculatedWidth < containerWidth && columns.length > 0) {
+    // Count columns without custom width
+    const columnsWithoutCustomWidth = columns.filter(
+      (col) => !customWidths[col]
+    );
+
+    if (columnsWithoutCustomWidth.length > 0) {
+      // Calculate remaining space
+      const remainingSpace =
+        containerWidth -
+        columns.reduce((sum, col) => sum + (customWidths[col] || 0), 0);
+
+      // Distribute remaining space among columns without custom width
+      const extraWidth = Math.floor(
+        remainingSpace / columnsWithoutCustomWidth.length
+      );
+
+      columnsWithoutCustomWidth.forEach((col) => {
+        baseWidths[col] = extraWidth;
+      });
+    }
+  }
+
+  return baseWidths;
 };
 
+// Ensure padding is consistent between header and cell
+const CELL_PADDING_X = 16; // px
+const CELL_PADDING_Y = 8; // px
+
 const ROW_HEIGHT = 48;
+
+// Fix borders to ensure precise alignment
+const borderFixStyles = {
+  boxSizing: "border-box" as const,
+  borderLeft: "none",
+  borderTop: "none",
+};
 
 const App: React.FC = () => {
   const [data, setData] = useState<Row[]>([]);
@@ -140,6 +189,18 @@ const App: React.FC = () => {
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>(
     {}
   );
+  // Custom column widths for resizing
+  const [customColumnWidths, setCustomColumnWidths] = useState<
+    Record<string, number>
+  >({});
+  const [resizingColumn, setResizingColumn] = useState<string | null>(null);
+  const [resizeStartX, setResizeStartX] = useState<number>(0);
+  const [initialWidth, setInitialWidth] = useState<number>(0);
+  // Track whether we're currently resizing (for cursor styling)
+  const [isResizing, setIsResizing] = useState(false);
+  // Add state for hovering column to improve the UX
+  const [hoveringColumn, setHoveringColumn] = useState<string | null>(null);
+
   // Filter modal state
   const [filterModalOpen, setFilterModalOpen] = useState(false);
   const [filterCol, setFilterCol] = useState<string>("");
@@ -158,6 +219,9 @@ const App: React.FC = () => {
   // Memoize the column type guessing function
   const guessColumnType = useCallback(
     (col: string, data: Row[]): "number" | "date" | "string" => {
+      // Always treat funding_total as a number
+      if (col === "funding_total") return "number";
+
       const sample = data.find((row) => row[col] && row[col].trim() !== "")?.[
         col
       ];
@@ -199,6 +263,24 @@ const App: React.FC = () => {
     activeFilters.forEach((f) => {
       filtered = filtered.filter((row) => {
         const val = row[f.col];
+
+        // Special handling for funding_total column
+        if (f.col === "funding_total" && f.colType === "number") {
+          // Remove currency symbols, commas, etc. and parse as number
+          const cleanVal = val ? val.replace(/[^0-9.-]+/g, "") : "0";
+          const num = Number(cleanVal);
+          const filterVal = Number(f.value);
+          const filterVal2 = f.value2 ? Number(f.value2) : 0;
+
+          if (f.type === "equals") return num === filterVal;
+          if (f.type === "gt") return num > filterVal;
+          if (f.type === "lt") return num < filterVal;
+          if (f.type === "range") return num >= filterVal && num <= filterVal2;
+
+          return true;
+        }
+
+        // Original logic for other columns
         if (f.colType === "number") {
           const num = Number(val);
           if (f.type === "equals") return num === Number(f.value);
@@ -252,14 +334,35 @@ const App: React.FC = () => {
     [columnOrder, visibleColumns]
   );
 
+  // Use window width state to trigger recalculation
+  const [windowWidth, setWindowWidth] = useState(window.innerWidth);
+
+  // Update window width on resize
+  useEffect(() => {
+    const handleResize = () => {
+      setWindowWidth(window.innerWidth);
+    };
+
+    window.addEventListener("resize", handleResize);
+    return () => {
+      window.removeEventListener("resize", handleResize);
+    };
+  }, []);
+
   // Memoize column widths
   const columnWidths = useMemo(
-    () => getColumnWidths(displayedColumns),
-    [displayedColumns]
+    () =>
+      getColumnWidths(displayedColumns, windowWidth - 80, customColumnWidths),
+    [displayedColumns, windowWidth, customColumnWidths]
   );
+
   const totalWidth = useMemo(
-    () => displayedColumns.reduce((sum, col) => sum + columnWidths[col], 0),
-    [displayedColumns, columnWidths]
+    () =>
+      Math.max(
+        displayedColumns.reduce((sum, col) => sum + columnWidths[col], 0),
+        windowWidth - 80
+      ),
+    [displayedColumns, columnWidths, windowWidth]
   );
 
   // Optimize pagination
@@ -293,6 +396,83 @@ const App: React.FC = () => {
       setOrder("asc");
     }
   };
+
+  // Improved column resizing handlers
+  const handleResizeStart = useCallback(
+    (e: React.MouseEvent, column: string) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      // Prevent triggering sort when starting resize
+      e.nativeEvent.stopImmediatePropagation();
+
+      // Calculate current width directly instead of using state which might be stale
+      const currentWidth = columnWidths[column];
+      const startX = e.clientX;
+
+      setResizingColumn(column);
+      setResizeStartX(startX);
+      setInitialWidth(currentWidth);
+      setIsResizing(true);
+
+      // Add resize styling to the body to maintain cursor during resize
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const handleMove = (moveEvent: MouseEvent) => {
+        const diff = moveEvent.clientX - startX;
+        const newWidth = Math.max(currentWidth + diff, MIN_COL_WIDTH);
+
+        setCustomColumnWidths((prev) => ({
+          ...prev,
+          [column]: newWidth,
+        }));
+      };
+
+      const handleUp = (upEvent: MouseEvent) => {
+        setResizingColumn(null);
+        setIsResizing(false);
+
+        // Restore default cursor and selection
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+
+        document.removeEventListener("mousemove", handleMove);
+        document.removeEventListener("mouseup", handleUp);
+      };
+
+      // Add listeners directly within this function to avoid dependency issues
+      document.addEventListener("mousemove", handleMove);
+      document.addEventListener("mouseup", handleUp);
+    },
+    [columnWidths]
+  );
+
+  // Track column hover for better resize handle visibility
+  const handleColumnMouseEnter = useCallback(
+    (column: string) => {
+      if (!isResizing) {
+        setHoveringColumn(column);
+      }
+    },
+    [isResizing]
+  );
+
+  const handleColumnMouseLeave = useCallback(() => {
+    if (!isResizing) {
+      setHoveringColumn(null);
+    }
+  }, [isResizing]);
+
+  // Simplified cleanup - we no longer need this effect
+  useEffect(() => {
+    return () => {
+      // Just clean up global state in case component unmounts during resize
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      document.body.classList.remove("resizing");
+    };
+  }, []);
 
   // Show/hide columns dropdown
   const handleOpenColumns = (event: React.MouseEvent<HTMLElement>) => {
@@ -363,40 +543,117 @@ const App: React.FC = () => {
     style: React.CSSProperties;
   }) => {
     const row = sortedData[index];
+    if (!row) return null;
+
     return (
-      <Box
-        style={{ ...style, width: totalWidth, display: "flex" }}
-        sx={{
-          borderBottom: "1px solid #f0f0f0",
-          bgcolor: "#fff",
-          "&:hover": { bgcolor: "#f5f5f5" },
+      <div
+        style={{
+          ...style,
+          display: "flex",
+          width: "100%",
+          minWidth: totalWidth,
+          boxSizing: "border-box",
         }}
       >
-        {displayedColumns.map((header) => (
-          <Box
+        {displayedColumns.map((header, colIdx) => (
+          <div
             key={`cell-${header}-${index}`}
-            sx={{
+            style={{
               width: columnWidths[header],
               minWidth: columnWidths[header],
               maxWidth: columnWidths[header],
               overflow: "hidden",
               textOverflow: "ellipsis",
               whiteSpace: "nowrap",
-              px: 2,
-              py: 1,
-              color: "#111",
-              fontSize: 15,
+              paddingLeft: CELL_PADDING_X,
+              paddingRight: CELL_PADDING_X,
+              paddingTop: CELL_PADDING_Y,
+              paddingBottom: CELL_PADDING_Y,
               display: "flex",
               alignItems: "center",
+              borderBottom: "1px solid #f0f0f0",
+              borderRight:
+                colIdx === displayedColumns.length - 1
+                  ? "none"
+                  : "1px solid #eee",
+              backgroundColor: "#fff",
+              color: "#111",
+              fontSize: 15,
+              ...borderFixStyles,
             }}
             title={row[header]}
           >
             {row[header]}
-          </Box>
+          </div>
         ))}
-      </Box>
+      </div>
     );
   };
+
+  // Add refs for header and body scroll containers
+  const headerRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<FixedSizeList>(null);
+
+  // Add a new ref for the outer scroll container
+  const outerScrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Debug output
+  console.log("Data length:", sortedData.length);
+  console.log("Display columns:", displayedColumns.length);
+
+  // Sync scrolling between header and body - using a more direct approach for virtualization
+  useEffect(() => {
+    const bodyElement = bodyRef.current;
+    const headerElement = headerRef.current;
+
+    if (!bodyElement || !headerElement) return;
+
+    const handleBodyScroll = () => {
+      // Only sync horizontal scrolling
+      headerElement.scrollLeft = bodyElement.scrollLeft;
+    };
+
+    // Add scroll event listener
+    bodyElement.addEventListener("scroll", handleBodyScroll);
+
+    return () => {
+      bodyElement.removeEventListener("scroll", handleBodyScroll);
+    };
+  }, []);
+
+  // Add CSS to head for global styles
+  useEffect(() => {
+    const style = document.createElement("style");
+    style.innerHTML = `
+      .resizing * {
+        cursor: col-resize !important;
+      }
+      
+      @keyframes pulse {
+        0% { background-color: rgba(25, 118, 210, 0.4); }
+        50% { background-color: rgba(25, 118, 210, 0.6); }
+        100% { background-color: rgba(25, 118, 210, 0.4); }
+      }
+    `;
+    document.head.appendChild(style);
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
+
+  // Add global resize styling class
+  useEffect(() => {
+    if (isResizing) {
+      document.body.classList.add("resizing");
+    } else {
+      document.body.classList.remove("resizing");
+    }
+
+    return () => {
+      document.body.classList.remove("resizing");
+    };
+  }, [isResizing]);
 
   return (
     <Box
@@ -491,6 +748,8 @@ const App: React.FC = () => {
                 label="Search columns"
                 value={columnSelectSearch}
                 onChange={(e) => setColumnSelectSearch(e.target.value)}
+                onKeyDown={(e) => e.stopPropagation()}
+                autoFocus
                 fullWidth
                 size="small"
               />
@@ -782,77 +1041,168 @@ const App: React.FC = () => {
             sx={{
               width: "100%",
               maxWidth: "100vw",
-              overflowX: "auto",
               borderRadius: 3,
               boxShadow: 2,
               display: "flex",
               flexDirection: "column",
               flex: 1,
               minHeight: 0,
+              overflow: "hidden",
             }}
           >
-            {/* Flexbox header */}
+            {/* Main scrollable container */}
             <Box
               sx={{
                 display: "flex",
-                width: totalWidth,
-                bgcolor: "#fff",
-                borderBottom: "2px solid #eee",
-                fontWeight: 700,
-                position: "sticky",
-                top: 0,
-                zIndex: 2,
+                flexDirection: "column",
+                flex: 1,
+                overflow: "hidden",
+                width: "100%",
               }}
             >
-              {displayedColumns.map((header, idx) => (
+              {/* Header (sticky) */}
+              <Box
+                sx={{
+                  borderBottom: "2px solid #eee",
+                  position: "sticky",
+                  top: 0,
+                  zIndex: 2,
+                  bgcolor: "#fff",
+                  width: "100%",
+                  overflow: "hidden",
+                  boxSizing: "border-box",
+                }}
+                ref={headerRef}
+              >
                 <Box
-                  key={header}
                   sx={{
-                    width: columnWidths[header],
-                    minWidth: columnWidths[header],
-                    maxWidth: columnWidths[header],
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    px: 2,
-                    py: 1,
-                    color: "#111",
-                    fontWeight: 700,
                     display: "flex",
-                    alignItems: "center",
-                    borderRight:
-                      idx === displayedColumns.length - 1
-                        ? "none"
-                        : "1px solid #eee",
-                    cursor: "pointer",
+                    width: "100%",
+                    minWidth: totalWidth,
+                    ...borderFixStyles,
                   }}
-                  onClick={() => handleSort(header)}
                 >
-                  {header}
-                  {orderBy === header && (
-                    <Box component="span" sx={{ ml: 1, fontSize: 12 }}>
-                      {order === "asc" ? "▲" : "▼"}
+                  {displayedColumns.map((header: string, idx: number) => (
+                    <Box
+                      key={header}
+                      sx={{
+                        width: columnWidths[header],
+                        minWidth: columnWidths[header],
+                        maxWidth: columnWidths[header],
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        paddingLeft: `${CELL_PADDING_X}px`,
+                        paddingRight: `${
+                          CELL_PADDING_X + RESIZE_HANDLE_WIDTH
+                        }px`, // Add extra padding for resize handle
+                        paddingTop: `${CELL_PADDING_Y}px`,
+                        paddingBottom: `${CELL_PADDING_Y}px`,
+                        color: "#111",
+                        fontWeight: 700,
+                        display: "flex",
+                        alignItems: "center",
+                        borderRight:
+                          idx === displayedColumns.length - 1
+                            ? "none"
+                            : "1px solid #eee",
+                        cursor: isResizing ? "col-resize" : "pointer",
+                        position: "relative",
+                        transition: "background-color 0.2s",
+                        backgroundColor:
+                          isResizing && resizingColumn === header
+                            ? "rgba(25, 118, 210, 0.1)"
+                            : "#fff",
+                        ...borderFixStyles,
+                      }}
+                      onClick={() => !isResizing && handleSort(header)}
+                      onMouseEnter={() => handleColumnMouseEnter(header)}
+                      onMouseLeave={handleColumnMouseLeave}
+                    >
+                      {header}
+                      {orderBy === header && (
+                        <Box component="span" sx={{ ml: 1, fontSize: 12 }}>
+                          {order === "asc" ? "▲" : "▼"}
+                        </Box>
+                      )}
+
+                      {/* The resize handle - completely reworked for reliability */}
+                      <div
+                        style={{
+                          position: "absolute",
+                          right: -3,
+                          top: 0,
+                          height: "100%",
+                          width: "10px",
+                          cursor: "col-resize",
+                          zIndex: 10,
+                          touchAction: "none",
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => handleResizeStart(e, header)}
+                      >
+                        <div
+                          style={{
+                            position: "absolute",
+                            top: "25%",
+                            bottom: "25%",
+                            left: "50%",
+                            width: "2px",
+                            transform: "translateX(-50%)",
+                            backgroundColor:
+                              isResizing && resizingColumn === header
+                                ? "#1976d2"
+                                : hoveringColumn === header
+                                ? "rgba(25, 118, 210, 0.6)"
+                                : "rgba(0, 0, 0, 0.1)",
+                            borderRadius: "1px",
+                          }}
+                        />
+                      </div>
                     </Box>
-                  )}
+                  ))}
                 </Box>
-              ))}
-            </Box>
-            {/* Virtualized body fills all available space */}
-            <Box sx={{ flex: 1, minHeight: 0, width: totalWidth }}>
-              {/* @ts-ignore: AutoSizer default export JSX quirk */}
-              <AutoSizer disableWidth>
-                {({ height }: { height: number }) => (
-                  <FixedSizeList
-                    height={height}
-                    width={totalWidth}
-                    itemCount={sortedData.length}
-                    itemSize={ROW_HEIGHT}
-                    overscanCount={5}
-                  >
-                    {Row}
-                  </FixedSizeList>
-                )}
-              </AutoSizer>
+              </Box>
+
+              {/* Custom scrollable container that will keep header and body in sync */}
+              <Box
+                sx={{
+                  flex: 1,
+                  minHeight: 0,
+                  overflowX: "auto", // This container handles horizontal scrolling
+                  overflowY: "hidden", // But not vertical
+                  width: "100%",
+                }}
+                ref={bodyRef}
+              >
+                {/* Use a div with fixed width for all data */}
+                <div style={{ width: "100%", minWidth: totalWidth }}>
+                  {sortedData.length === 0 ? (
+                    <Box sx={{ p: 2, textAlign: "center" }}>
+                      No data to display
+                    </Box>
+                  ) : (
+                    <div
+                      style={{
+                        height: window.innerHeight - 180,
+                        width: "100%",
+                      }}
+                    >
+                      {/* The list itself only handles vertical scrolling */}
+                      <FixedSizeList
+                        height={window.innerHeight - 180}
+                        width={totalWidth}
+                        itemCount={sortedData.length}
+                        itemSize={ROW_HEIGHT}
+                        overscanCount={10}
+                        style={{ overflow: "hidden auto" }} // Only allow vertical scrolling here
+                      >
+                        {Row}
+                      </FixedSizeList>
+                    </div>
+                  )}
+                </div>
+              </Box>
             </Box>
           </Paper>
         </Box>
