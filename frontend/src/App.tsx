@@ -1118,7 +1118,7 @@ const App: React.FC = () => {
         >
           <DialogTitle sx={{ pb: 2, pt: 3 }}>Add Filter</DialogTitle>
           <DialogContent sx={{ pt: 3, pb: 3, px: 3 }}>
-            <Stack spacing={3} minWidth={300}>
+            <Stack spacing={3} minWidth={300} marginTop={"5px"}>
               {/* Column search */}
               <TextField
                 label="Search columns"
@@ -1126,7 +1126,7 @@ const App: React.FC = () => {
                 onChange={handleFilterColSearchChange}
                 fullWidth
                 size="small"
-                sx={{ mb: 1, mt: 0, mx: 0.5 }}
+                sx={{ mb: 1, mt: 0 }}
                 InputLabelProps={{
                   shrink: true,
                   sx: { backgroundColor: "white", px: 1 },
