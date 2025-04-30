@@ -217,8 +217,24 @@ const App: React.FC = () => {
   // Add state for column selection search
   const [columnSelectSearch, setColumnSelectSearch] = useState("");
 
-  // Add debounced search
-  const debouncedSearch = useDebounce(search, 300);
+  // Add debounced searches with optimized delays and trimming
+  const debouncedSearch = useDebounce(search, 600);
+  const trimmedSearch = useMemo(
+    () => debouncedSearch.trim(),
+    [debouncedSearch]
+  );
+
+  const debouncedFilterColSearch = useDebounce(filterColSearch, 300);
+  const trimmedFilterColSearch = useMemo(
+    () => debouncedFilterColSearch.trim(),
+    [debouncedFilterColSearch]
+  );
+
+  const debouncedColumnSelectSearch = useDebounce(columnSelectSearch, 300);
+  const trimmedColumnSelectSearch = useMemo(
+    () => debouncedColumnSelectSearch.trim(),
+    [debouncedColumnSelectSearch]
+  );
 
   // Memoize the column type guessing function
   const guessColumnType = useCallback(
@@ -274,83 +290,216 @@ const App: React.FC = () => {
       });
   }, []);
 
-  // Filtering logic
-  const filteredData = useMemo(() => {
-    let filtered = data;
-    // Global search
-    if (debouncedSearch) {
-      const lower = debouncedSearch.toLowerCase();
-      filtered = filtered.filter((row) =>
-        visibleColumns.some((h) => (row[h] || "").toLowerCase().includes(lower))
-      );
+  // Add memoized parsed website data to avoid parsing on every filter operation
+  const parsedWebsiteData = useMemo(() => {
+    const cache: Record<
+      string,
+      { domain?: string; url?: string; raw: string }
+    > = {};
+
+    // Log parsing results for debugging
+    let parsingSuccesses = 0;
+    let parsingFailures = 0;
+
+    // Sample some raw website data to understand its format
+    const sampleCount = Math.min(10, data.length);
+    console.log(`Examining ${sampleCount} website samples:`);
+
+    for (let i = 0; i < sampleCount; i++) {
+      if (data[i] && data[i].website) {
+        console.log(`Sample ${i}:`, data[i].website);
+      }
     }
-    // Advanced filters
-    activeFilters.forEach((f) => {
+
+    data.forEach((row) => {
+      if (row.website) {
+        try {
+          // Try parsing the JSON
+          let parsed;
+          try {
+            parsed = JSON.parse(row.website);
+          } catch (jsonError) {
+            // If JSON parsing fails, try to parse it as a raw domain string
+            const domainMatch = /^(?:https?:\/\/)?(?:www\.)?([^\/]+)/.exec(
+              row.website
+            );
+            if (domainMatch) {
+              parsed = { domain: domainMatch[1], url: row.website };
+              console.log("Extracted domain from URL string:", parsed.domain);
+            } else {
+              // Just use it as a raw string
+              parsed = { domain: row.website, url: row.website };
+            }
+          }
+
+          // Normalize domain - ensure lowercase and no www. prefix
+          let domain = (parsed.domain || "").toLowerCase();
+          if (domain.startsWith("www.")) {
+            domain = domain.substring(4);
+          }
+
+          // Store normalized values
+          cache[row.id] = {
+            domain,
+            url: (parsed.url || "").toLowerCase(),
+            raw: row.website.toLowerCase(),
+          };
+
+          parsingSuccesses++;
+
+          // Log sample of successful parses for domains with dots
+          if (domain && domain.includes(".") && parsingSuccesses < 10) {
+            console.log(
+              "Successfully parsed domain with dot:",
+              domain,
+              "from:",
+              row.website
+            );
+          }
+        } catch (e) {
+          parsingFailures++;
+          // Store raw data for fallback searching
+          cache[row.id] = { raw: row.website.toLowerCase() };
+        }
+      }
+    });
+
+    console.log(
+      `Website parsing: ${parsingSuccesses} successes, ${parsingFailures} failures`
+    );
+
+    return cache;
+  }, [data]);
+
+  // Filtering logic - optimized to reduce work during typing
+  const filteredData = useMemo(() => {
+    // Skip all filtering if no search term and no filters - return all data
+    if (!trimmedSearch && (!activeFilters || activeFilters.length === 0)) {
+      return data;
+    }
+
+    let filtered = data;
+
+    // Only apply filtering when we have a debounced search value
+    if (trimmedSearch) {
+      const lower = trimmedSearch.toLowerCase();
+
+      // Add debug logging to see what we're searching for
+      console.log("Searching for:", lower);
+
+      // The simplest approach - just search the raw data
       filtered = filtered.filter((row) => {
-        const val = row[f.col];
-
-        // Special handling for funding_total column
-        if (f.col === "funding_total" && f.colType === "number") {
-          // Remove currency symbols, commas, etc. and parse as number
-          const cleanVal = val ? val.replace(/[^0-9.-]+/g, "") : "0";
-          const num = Number(cleanVal);
-          const filterVal = Number(f.value);
-          const filterVal2 = f.value2 ? Number(f.value2) : 0;
-
-          if (f.type === "equals") return num === filterVal;
-          if (f.type === "gt") return num > filterVal;
-          if (f.type === "lt") return num < filterVal;
-          if (f.type === "range") return num >= filterVal && num <= filterVal2;
-
+        // Check if company name contains the search string (always do this)
+        if (row.name && row.name.toLowerCase().includes(lower)) {
           return true;
         }
 
-        // Original logic for other columns
-        if (f.colType === "number") {
-          const num = Number(val);
-          if (f.type === "equals") return num === Number(f.value);
-          if (f.type === "gt") return num > Number(f.value);
-          if (f.type === "lt") return num < Number(f.value);
-          if (f.type === "range")
-            return num >= Number(f.value) && num <= Number(f.value2);
-        } else if (f.colType === "date") {
-          const d = new Date(val).getTime();
-          if (f.type === "equals") return d === new Date(f.value).getTime();
-          if (f.type === "before") return d < new Date(f.value).getTime();
-          if (f.type === "after") return d > new Date(f.value).getTime();
-          if (f.type === "range")
-            return (
-              d >= new Date(f.value).getTime() &&
-              d <= new Date(f.value2).getTime()
-            );
-        } else {
-          if (f.type === "contains")
-            return (val || "")
-              .toLowerCase()
-              .includes((f.value || "").toLowerCase());
-          if (f.type === "equals") return (val || "") === f.value;
+        // For website, just do a direct string search on the raw field
+        if (row.website && row.website.toLowerCase().includes(lower)) {
+          console.log("Website match found:", row.website);
+          return true;
         }
-        return true;
-      });
-    });
-    return filtered;
-  }, [data, debouncedSearch, activeFilters, visibleColumns]);
 
-  // Sorting logic
+        return false;
+      });
+    }
+
+    // Only apply advanced filters if there are any
+    if (activeFilters && activeFilters.length > 0) {
+      // Apply each filter
+      activeFilters.forEach((f) => {
+        filtered = filtered.filter((row) => {
+          const val = row[f.col];
+
+          // Special handling for funding_total column
+          if (f.col === "funding_total" && f.colType === "number") {
+            // Remove currency symbols, commas, etc. and parse as number
+            const cleanVal = val ? val.replace(/[^0-9.-]+/g, "") : "0";
+            const num = Number(cleanVal);
+            const filterVal = Number(f.value);
+            const filterVal2 = f.value2 ? Number(f.value2) : 0;
+
+            if (f.type === "equals") return num === filterVal;
+            if (f.type === "gt") return num > filterVal;
+            if (f.type === "lt") return num < filterVal;
+            if (f.type === "range")
+              return num >= filterVal && num <= filterVal2;
+
+            return true;
+          }
+
+          // Special handling for website column - use direct string search
+          if (f.col === "website") {
+            if (f.type === "contains") {
+              const searchVal = (f.value || "").toLowerCase();
+              return (
+                row.website && row.website.toLowerCase().includes(searchVal)
+              );
+            }
+          }
+
+          // Original logic for other columns
+          if (f.colType === "number") {
+            const num = Number(val);
+            if (f.type === "equals") return num === Number(f.value);
+            if (f.type === "gt") return num > Number(f.value);
+            if (f.type === "lt") return num < Number(f.value);
+            if (f.type === "range")
+              return num >= Number(f.value) && num <= Number(f.value2);
+          } else if (f.colType === "date") {
+            const d = new Date(val).getTime();
+            if (f.type === "equals") return d === new Date(f.value).getTime();
+            if (f.type === "before") return d < new Date(f.value).getTime();
+            if (f.type === "after") return d > new Date(f.value).getTime();
+            if (f.type === "range")
+              return (
+                d >= new Date(f.value).getTime() &&
+                d <= new Date(f.value2).getTime()
+              );
+          } else {
+            if (f.type === "contains")
+              return (val || "")
+                .toLowerCase()
+                .includes((f.value || "").toLowerCase());
+            if (f.type === "equals") return (val || "") === f.value;
+          }
+          return true;
+        });
+      });
+    }
+
+    return filtered;
+  }, [data, trimmedSearch, activeFilters]);
+
+  // Sorting logic - optimize with a stable sort and memoization
   const sortedData = useMemo(() => {
+    // Return filtered data directly if no sorting is needed
     if (!orderBy) return filteredData;
-    return [...filteredData].sort((a, b) => {
+
+    // Use a stable sorting algorithm with memoization
+    const timeStart = performance.now();
+
+    // Create a sorted copy
+    const sorted = [...filteredData].sort((a, b) => {
+      // Get values and handle empty cases
       const aVal = a[orderBy] || "";
       const bVal = b[orderBy] || "";
+
+      // Check if numeric comparison is possible
       if (!isNaN(Number(aVal)) && !isNaN(Number(bVal))) {
         return order === "asc"
           ? Number(aVal) - Number(bVal)
           : Number(bVal) - Number(aVal);
       }
+
+      // Default to string comparison
       return order === "asc"
-        ? aVal.localeCompare(bVal)
-        : bVal.localeCompare(aVal);
+        ? String(aVal).localeCompare(String(bVal))
+        : String(bVal).localeCompare(String(aVal));
     });
+
+    console.log(`Sorting took ${performance.now() - timeStart}ms`);
+    return sorted;
   }, [filteredData, orderBy, order]);
 
   // Memoize displayed columns computation
@@ -544,8 +693,10 @@ const App: React.FC = () => {
       {
         col: filterCol,
         type: filterType,
-        value: filterValue,
-        value2: filterValue2,
+        value:
+          typeof filterValue === "string" ? filterValue.trim() : filterValue,
+        value2:
+          typeof filterValue2 === "string" ? filterValue2.trim() : filterValue2,
         colType: guessColumnType(filterCol, data),
       },
     ]);
@@ -559,61 +710,57 @@ const App: React.FC = () => {
     setActiveFilters((prev) => prev.filter((_, i) => i !== idx));
   };
 
-  // Virtualized row
-  const Row = ({
-    index,
-    style,
-  }: {
-    index: number;
-    style: React.CSSProperties;
-  }) => {
-    const row = sortedData[index];
-    if (!row) return null;
+  // Virtualized row - wrap with React.memo to prevent unnecessary rerenders
+  const Row = React.memo(
+    ({ index, style }: { index: number; style: React.CSSProperties }) => {
+      const row = sortedData[index];
+      if (!row) return null;
 
-    return (
-      <div
-        style={{
-          ...style,
-          display: "flex",
-          width: "100%",
-          minWidth: totalWidth,
-          boxSizing: "border-box",
-        }}
-      >
-        {displayedColumns.map((header, colIdx) => (
-          <div
-            key={`cell-${header}-${index}`}
-            style={{
-              width: columnWidths[header],
-              minWidth: columnWidths[header],
-              maxWidth: columnWidths[header],
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              paddingLeft: CELL_PADDING_X,
-              paddingRight: CELL_PADDING_X,
-              paddingTop: CELL_PADDING_Y,
-              paddingBottom: CELL_PADDING_Y,
-              display: "flex",
-              alignItems: "center",
-              borderBottom: "1px solid #f0f0f0",
-              borderRight:
-                colIdx === displayedColumns.length - 1
-                  ? "none"
-                  : "1px solid #eee",
-              backgroundColor: "#fff",
-              color: "#111",
-              fontSize: 15,
-              ...borderFixStyles,
-            }}
-            title={row[header]}
-          >
-            {row[header]}
-          </div>
-        ))}
-      </div>
-    );
-  };
+      return (
+        <div
+          style={{
+            ...style,
+            display: "flex",
+            width: "100%",
+            minWidth: totalWidth,
+            boxSizing: "border-box",
+          }}
+        >
+          {displayedColumns.map((header, colIdx) => (
+            <div
+              key={`cell-${header}-${index}`}
+              style={{
+                width: columnWidths[header],
+                minWidth: columnWidths[header],
+                maxWidth: columnWidths[header],
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                paddingLeft: CELL_PADDING_X,
+                paddingRight: CELL_PADDING_X,
+                paddingTop: CELL_PADDING_Y,
+                paddingBottom: CELL_PADDING_Y,
+                display: "flex",
+                alignItems: "center",
+                borderBottom: "1px solid #f0f0f0",
+                borderRight:
+                  colIdx === displayedColumns.length - 1
+                    ? "none"
+                    : "1px solid #eee",
+                backgroundColor: "#fff",
+                color: "#111",
+                fontSize: 15,
+                ...borderFixStyles,
+              }}
+              title={row[header]}
+            >
+              {row[header]}
+            </div>
+          ))}
+        </div>
+      );
+    }
+  );
 
   // Add refs for header and body scroll containers
   const headerRef = useRef<HTMLDivElement>(null);
@@ -680,6 +827,9 @@ const App: React.FC = () => {
     };
   }, [isResizing]);
 
+  // Add a ref for the search input to optimize its performance
+  const searchInputRef = useRef<HTMLInputElement>(null);
+
   return (
     <Box
       sx={{
@@ -720,14 +870,24 @@ const App: React.FC = () => {
           px={2}
         >
           <TextField
-            label="Search by any field"
+            label="Search by company name or website"
             variant="outlined"
             size="small"
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e) => {
+              // Allow spaces during typing for better UX
+              setSearch(e.target.value);
+              // The actual filtering will happen when debouncedSearch updates
+            }}
             sx={{ flex: 1, bgcolor: "#fff" }}
             InputLabelProps={{ style: { color: "#222" } }}
-            inputProps={{ style: { color: "#111" } }}
+            inputProps={{
+              style: { color: "#111" },
+              ref: searchInputRef,
+              // Optimize the input to reduce render bottlenecks
+              autoComplete: "off",
+              spellCheck: "false",
+            }}
           />
           <Tooltip title="Advanced Filter">
             <IconButton
@@ -787,7 +947,7 @@ const App: React.FC = () => {
                       .filter((col) =>
                         col
                           .toLowerCase()
-                          .includes(columnSelectSearch.toLowerCase())
+                          .includes(trimmedColumnSelectSearch.toLowerCase())
                       )
                       .map((col, idx) => (
                         <Draggable key={col} draggableId={col} index={idx}>
@@ -878,7 +1038,11 @@ const App: React.FC = () => {
               <TextField
                 label="Search columns"
                 value={filterColSearch}
-                onChange={(e) => setFilterColSearch(e.target.value)}
+                onChange={(e) => {
+                  // Update immediately, allowing spaces during typing
+                  setFilterColSearch(e.target.value);
+                  // Actual filtering happens with debouncedFilterColSearch
+                }}
                 fullWidth
                 size="small"
               />
@@ -896,7 +1060,9 @@ const App: React.FC = () => {
                 >
                   {displayedColumns
                     .filter((col) =>
-                      col.toLowerCase().includes(filterColSearch.toLowerCase())
+                      col
+                        .toLowerCase()
+                        .includes(trimmedFilterColSearch.toLowerCase())
                     )
                     .map((col) => (
                       <MuiMenuItem key={col} value={col}>
@@ -974,13 +1140,19 @@ const App: React.FC = () => {
                               label="Min"
                               type="number"
                               value={filterValue}
-                              onChange={(e) => setFilterValue(e.target.value)}
+                              onChange={(e) => {
+                                // Allow spaces during typing
+                                setFilterValue(e.target.value);
+                              }}
                             />
                             <TextField
                               label="Max"
                               type="number"
                               value={filterValue2}
-                              onChange={(e) => setFilterValue2(e.target.value)}
+                              onChange={(e) => {
+                                // Allow spaces during typing
+                                setFilterValue2(e.target.value);
+                              }}
                             />
                           </Stack>
                         );
