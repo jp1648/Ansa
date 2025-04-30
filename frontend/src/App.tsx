@@ -906,7 +906,7 @@ const App: React.FC = () => {
           px={2}
         >
           <TextField
-            label="Search by company name or website"
+            label="Search for company"
             variant="outlined"
             size="small"
             value={search}
