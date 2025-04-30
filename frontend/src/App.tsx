@@ -4,6 +4,7 @@ import React, {
   useMemo,
   useRef,
   useCallback,
+  useTransition,
 } from "react";
 import Papa from "papaparse";
 import { FixedSizeList } from "react-window";
@@ -216,6 +217,8 @@ const App: React.FC = () => {
   const [filterColSearch, setFilterColSearch] = useState("");
   // Add state for column selection search
   const [columnSelectSearch, setColumnSelectSearch] = useState("");
+  // Add isPending states for transitions to keep UI responsive
+  const [isPending, startTransition] = useTransition();
 
   // Add debounced searches with optimized delays and trimming
   const debouncedSearch = useDebounce(search, 600);
@@ -224,13 +227,14 @@ const App: React.FC = () => {
     [debouncedSearch]
   );
 
-  const debouncedFilterColSearch = useDebounce(filterColSearch, 300);
+  // Reduced debounce delays for UI search fields to make them more responsive
+  const debouncedFilterColSearch = useDebounce(filterColSearch, 150);
   const trimmedFilterColSearch = useMemo(
     () => debouncedFilterColSearch.trim(),
     [debouncedFilterColSearch]
   );
 
-  const debouncedColumnSelectSearch = useDebounce(columnSelectSearch, 300);
+  const debouncedColumnSelectSearch = useDebounce(columnSelectSearch, 150);
   const trimmedColumnSelectSearch = useMemo(
     () => debouncedColumnSelectSearch.trim(),
     [debouncedColumnSelectSearch]
@@ -830,6 +834,38 @@ const App: React.FC = () => {
   // Add a ref for the search input to optimize its performance
   const searchInputRef = useRef<HTMLInputElement>(null);
 
+  // Optimize search input handlers with memoized callbacks
+  const handleSearchChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      setSearch(e.target.value);
+    },
+    []
+  );
+
+  const handleColumnSearchChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      setColumnSelectSearch(value);
+      // Use transition for non-critical UI updates to keep the interface responsive
+      startTransition(() => {
+        // Any heavy computations related to this change can go here
+      });
+    },
+    []
+  );
+
+  const handleFilterColSearchChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const value = e.target.value;
+      setFilterColSearch(value);
+      // Use transition for non-critical UI updates
+      startTransition(() => {
+        // Any heavy computations related to this change can go here
+      });
+    },
+    []
+  );
+
   return (
     <Box
       sx={{
@@ -874,11 +910,7 @@ const App: React.FC = () => {
             variant="outlined"
             size="small"
             value={search}
-            onChange={(e) => {
-              // Allow spaces during typing for better UX
-              setSearch(e.target.value);
-              // The actual filtering will happen when debouncedSearch updates
-            }}
+            onChange={handleSearchChange}
             sx={{ flex: 1, bgcolor: "#fff" }}
             InputLabelProps={{ style: { color: "#222" } }}
             inputProps={{
@@ -932,24 +964,51 @@ const App: React.FC = () => {
               <TextField
                 label="Search columns"
                 value={columnSelectSearch}
-                onChange={(e) => setColumnSelectSearch(e.target.value)}
+                onChange={handleColumnSearchChange}
                 onKeyDown={(e) => e.stopPropagation()}
                 autoFocus
                 fullWidth
                 size="small"
+                InputProps={{
+                  endAdornment: isPending ? (
+                    <CircularProgress size={16} thickness={4} sx={{ mr: 1 }} />
+                  ) : null,
+                }}
+                inputProps={{
+                  autoComplete: "off",
+                  spellCheck: "false",
+                }}
               />
             </Box>
             <DragDropContext onDragEnd={onDragEnd}>
               <Droppable droppableId="columns-droppable">
                 {(provided) => (
-                  <Box ref={provided.innerRef} {...provided.droppableProps}>
-                    {columnOrder
-                      .filter((col) =>
+                  <Box
+                    ref={provided.innerRef}
+                    {...provided.droppableProps}
+                    sx={{
+                      maxHeight: "50vh",
+                      overflow: "auto",
+                      "&::-webkit-scrollbar": {
+                        width: "8px",
+                      },
+                      "&::-webkit-scrollbar-thumb": {
+                        backgroundColor: "rgba(0,0,0,0.2)",
+                        borderRadius: "4px",
+                      },
+                    }}
+                  >
+                    {/* Use a memoized filtered column list */}
+                    {useMemo(() => {
+                      // Apply filter first to improve performance
+                      const filteredColumns = columnOrder.filter((col) =>
                         col
                           .toLowerCase()
                           .includes(trimmedColumnSelectSearch.toLowerCase())
-                      )
-                      .map((col, idx) => (
+                      );
+
+                      // Only map the filtered list
+                      return filteredColumns.map((col, idx) => (
                         <Draggable key={col} draggableId={col} index={idx}>
                           {(dragProvided) => (
                             <MenuItem
@@ -961,17 +1020,32 @@ const App: React.FC = () => {
                                 display: "flex",
                                 alignItems: "center",
                                 gap: 1,
+                                padding: "4px 16px",
                               }}
                             >
                               <Checkbox
                                 checked={visibleColumns.includes(col)}
                                 onChange={() => handleToggleColumn(col)}
+                                size="small"
                               />
-                              <ListItemText primary={col} />
+                              <ListItemText
+                                primary={col}
+                                primaryTypographyProps={{
+                                  style: {
+                                    fontSize: "14px",
+                                    whiteSpace: "nowrap",
+                                  },
+                                }}
+                              />
                             </MenuItem>
                           )}
                         </Draggable>
-                      ))}
+                      ));
+                    }, [
+                      columnOrder,
+                      trimmedColumnSelectSearch,
+                      visibleColumns,
+                    ])}
                     {provided.placeholder}
                   </Box>
                 )}
@@ -1030,21 +1104,37 @@ const App: React.FC = () => {
           </Stack>
         )}
         {/* Filter Modal */}
-        <Dialog open={filterModalOpen} onClose={handleCloseFilter}>
+        <Dialog
+          open={filterModalOpen}
+          onClose={handleCloseFilter}
+          PaperProps={{
+            sx: { width: "400px", maxWidth: "95vw" },
+          }}
+        >
           <DialogTitle>Add Filter</DialogTitle>
-          <DialogContent>
+          <DialogContent sx={{ pt: 2, pb: 2, px: 3 }}>
             <Stack spacing={2} minWidth={300}>
               {/* Column search */}
               <TextField
                 label="Search columns"
                 value={filterColSearch}
-                onChange={(e) => {
-                  // Update immediately, allowing spaces during typing
-                  setFilterColSearch(e.target.value);
-                  // Actual filtering happens with debouncedFilterColSearch
-                }}
+                onChange={handleFilterColSearchChange}
                 fullWidth
                 size="small"
+                sx={{ mb: 2, mt: 3, mx: 0.5 }}
+                InputLabelProps={{
+                  shrink: true,
+                  sx: { backgroundColor: "white", px: 1 },
+                }}
+                InputProps={{
+                  endAdornment: isPending ? (
+                    <CircularProgress size={16} thickness={4} sx={{ mr: 1 }} />
+                  ) : null,
+                }}
+                inputProps={{
+                  autoComplete: "off",
+                  spellCheck: "false",
+                }}
               />
               <FormControl fullWidth>
                 <InputLabel>Column</InputLabel>
@@ -1057,18 +1147,33 @@ const App: React.FC = () => {
                     setFilterValue("");
                     setFilterValue2("");
                   }}
+                  MenuProps={{
+                    PaperProps: {
+                      style: {
+                        maxHeight: 300,
+                      },
+                    },
+                  }}
                 >
-                  {displayedColumns
-                    .filter((col) =>
+                  {/* Use a memoized filtered column list for better performance */}
+                  {useMemo(() => {
+                    // Get filtered columns first to reduce rendering operations
+                    const filteredColumns = displayedColumns.filter((col) =>
                       col
                         .toLowerCase()
                         .includes(trimmedFilterColSearch.toLowerCase())
-                    )
-                    .map((col) => (
-                      <MuiMenuItem key={col} value={col}>
+                    );
+
+                    return filteredColumns.map((col) => (
+                      <MuiMenuItem
+                        key={col}
+                        value={col}
+                        sx={{ fontSize: "14px", py: 0.5 }}
+                      >
                         {col}
                       </MuiMenuItem>
-                    ))}
+                    ));
+                  }, [displayedColumns, trimmedFilterColSearch])}
                 </Select>
               </FormControl>
               {filterCol && (
