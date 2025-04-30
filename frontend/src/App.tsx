@@ -1049,16 +1049,18 @@ const App: React.FC = () => {
                               ref={dragProvided.innerRef}
                               {...dragProvided.draggableProps}
                               {...dragProvided.dragHandleProps}
+                              onClick={() => handleToggleColumn(col)}
                               sx={{
                                 display: "flex",
                                 alignItems: "center",
                                 gap: 1,
                                 padding: "4px 16px",
+                                cursor: "pointer",
                               }}
                             >
                               <Checkbox
                                 checked={visibleColumns.includes(col)}
-                                onChange={() => handleToggleColumn(col)}
+                                onClick={(e) => e.stopPropagation()}
                                 size="small"
                               />
                               <ListItemText
