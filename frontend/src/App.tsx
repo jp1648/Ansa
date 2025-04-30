@@ -714,6 +714,28 @@ const App: React.FC = () => {
     setActiveFilters((prev) => prev.filter((_, i) => i !== idx));
   };
 
+  // Utility to format numbers to 2 significant digits
+  const formatSignificantDigits = (
+    numStr: string | null | undefined
+  ): string => {
+    if (numStr === null || numStr === undefined || numStr.trim() === "") {
+      return "";
+    }
+    // Attempt to parse as float, return original if it's not a valid number representation
+    const num = parseFloat(numStr);
+    if (isNaN(num)) {
+      return numStr; // Return original string if it's not a number
+    }
+    if (num === 0) {
+      return "0"; // Handle zero explicitly
+    }
+
+    // Use toPrecision for 2 significant digits
+    // This handles both large and small numbers correctly, including scientific notation output if necessary
+    // which is standard for very small/large significant figure representations.
+    return num.toPrecision(2);
+  };
+
   // Virtualized row - wrap with React.memo to prevent unnecessary rerenders
   const Row = React.memo(
     ({ index, style }: { index: number; style: React.CSSProperties }) => {
@@ -730,37 +752,48 @@ const App: React.FC = () => {
             boxSizing: "border-box",
           }}
         >
-          {displayedColumns.map((header, colIdx) => (
-            <div
-              key={`cell-${header}-${index}`}
-              style={{
-                width: columnWidths[header],
-                minWidth: columnWidths[header],
-                maxWidth: columnWidths[header],
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                paddingLeft: CELL_PADDING_X,
-                paddingRight: CELL_PADDING_X,
-                paddingTop: CELL_PADDING_Y,
-                paddingBottom: CELL_PADDING_Y,
-                display: "flex",
-                alignItems: "center",
-                borderBottom: "1px solid #f0f0f0",
-                borderRight:
-                  colIdx === displayedColumns.length - 1
-                    ? "none"
-                    : "1px solid #eee",
-                backgroundColor: "#fff",
-                color: "#111",
-                fontSize: 15,
-                ...borderFixStyles,
-              }}
-              title={row[header]}
-            >
-              {row[header]}
-            </div>
-          ))}
+          {displayedColumns.map((header, colIdx) => {
+            // Determine if the column is likely numeric based on its name
+            // Adjust this logic if more columns need numeric formatting
+            const isNumericColumn =
+              header === "Model Score" || header === "Normalized Score";
+            const cellValue = row[header];
+            const displayValue = isNumericColumn
+              ? formatSignificantDigits(cellValue)
+              : cellValue;
+
+            return (
+              <div
+                key={`cell-${header}-${index}`}
+                style={{
+                  width: columnWidths[header],
+                  minWidth: columnWidths[header],
+                  maxWidth: columnWidths[header],
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  paddingLeft: CELL_PADDING_X,
+                  paddingRight: CELL_PADDING_X,
+                  paddingTop: CELL_PADDING_Y,
+                  paddingBottom: CELL_PADDING_Y,
+                  display: "flex",
+                  alignItems: "center",
+                  borderBottom: "1px solid #f0f0f0",
+                  borderRight:
+                    colIdx === displayedColumns.length - 1
+                      ? "none"
+                      : "1px solid #eee",
+                  backgroundColor: "#fff",
+                  color: "#111",
+                  fontSize: 15,
+                  ...borderFixStyles,
+                }}
+                title={cellValue} // Keep original value in title for hover
+              >
+                {displayValue}
+              </div>
+            );
+          })}
         </div>
       );
     }
