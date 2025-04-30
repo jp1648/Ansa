@@ -960,7 +960,7 @@ const App: React.FC = () => {
               </Button>
             </Box>
             {/* Column search */}
-            <Box px={2} pb={1}>
+            <Box px={2} pb={1} sx={{ width: 300 }}>
               <TextField
                 label="Search columns"
                 value={columnSelectSearch}
@@ -1108,12 +1108,17 @@ const App: React.FC = () => {
           open={filterModalOpen}
           onClose={handleCloseFilter}
           PaperProps={{
-            sx: { width: "400px", maxWidth: "95vw" },
+            sx: {
+              maxWidth: "95vw",
+              width: "auto",
+              maxHeight: "90vh",
+              margin: "48px auto", // Add more top margin
+            },
           }}
         >
-          <DialogTitle>Add Filter</DialogTitle>
-          <DialogContent sx={{ pt: 2, pb: 2, px: 3 }}>
-            <Stack spacing={2} minWidth={300}>
+          <DialogTitle sx={{ pb: 2, pt: 3 }}>Add Filter</DialogTitle>
+          <DialogContent sx={{ pt: 3, pb: 3, px: 3 }}>
+            <Stack spacing={3} minWidth={300}>
               {/* Column search */}
               <TextField
                 label="Search columns"
@@ -1121,7 +1126,7 @@ const App: React.FC = () => {
                 onChange={handleFilterColSearchChange}
                 fullWidth
                 size="small"
-                sx={{ mb: 2, mt: 3, mx: 0.5 }}
+                sx={{ mb: 1, mt: 0, mx: 0.5 }}
                 InputLabelProps={{
                   shrink: true,
                   sx: { backgroundColor: "white", px: 1 },
